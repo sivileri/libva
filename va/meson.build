@@ -55,24 +55,42 @@ libva_headers_priv = [
   'va_trace.h',
 ]
 
-libva_sym = 'libva.syms'
-libva_sym_path = '@0@/@1@'.format(meson.current_source_dir(), libva_sym)
+if host_machine.system() == 'windows'
+  libva = static_library(
+    'va',
+    sources : libva_sources +
+              libva_headers +
+              libva_headers_priv,
+    c_args : [ '-DSYSCONFDIR="' + sysconfdir + '"'] + ['-DVA_DRIVERS_PATH="' + driverdir + '"'] + va_c_args,
+    include_directories : configinc)
+
+  libva_dep = declare_dependency(
+    link_whole : libva,
+    include_directories : configinc)
+else
+  libva_sym = 'libva.syms'
+  libva_sym_path = '@0@/@1@'.format(meson.current_source_dir(), libva_sym)
+
+  libva = shared_library(
+   'va',
+   sources : libva_sources +
+             libva_headers +
+             libva_headers_priv,
+   soversion : libva_lt_current,
+   version : libva_lt_version,
+   c_args : [ '-DSYSCONFDIR="' + sysconfdir + '"'] + ['-DVA_DRIVERS_PATH="' + driverdir + '"'] + va_c_args,
+   include_directories : configinc,
+   link_args : '-Wl,-version-script,' + libva_sym_path,
+   link_depends : libva_sym,
+   install : true,
+   dependencies : [ dl_dep ])
+ libva_dep = declare_dependency(
+   link_with : libva,
+   include_directories : configinc,
+   dependencies : [ dl_dep ])
+endif
 
 install_headers(libva_headers, subdir : 'va')
-
-libva = shared_library(
-  'va',
-  sources : libva_sources +
-            libva_headers +
-            libva_headers_priv,
-  soversion : libva_lt_current,
-  version : libva_lt_version,
-  c_args : [ '-DSYSCONFDIR="' + sysconfdir + '"'] + ['-DVA_DRIVERS_PATH="' + driverdir + '"'] + va_c_args,
-  include_directories : configinc,
-  link_args : '-Wl,-version-script,' + libva_sym_path,
-  link_depends : libva_sym,
-  install : true,
-  dependencies : [ dl_dep ])
 
 libva_dep = declare_dependency(
   link_with : libva,
@@ -264,6 +282,50 @@ if WITH_WAYLAND
 
   libva_wayland_dep = declare_dependency(
     link_with : libva_wayland,
+    include_directories : configinc,
+    dependencies : deps)
+endif
+
+if WITH_WIN32
+  libva_win32_sources = [
+    'win32/va_win32.c',
+  ]
+
+  libva_win32_headers = [
+    'win32/va_win32.h',
+  ]
+
+  libva_headers_subproject += libva_win32_headers
+
+  deps = [ libwin32_dep, libva_dep]
+
+  libva_win32_args = [
+    '-DLIBVA_MAJOR_VERSION=@0@'.format(libva_major_version)
+  ]
+
+  install_headers(libva_win32_headers, subdir : 'va')
+
+  # Win32 backend statically linked
+  # Make the main va target a static_library on Windows and have the win32 target generate the final DLL
+  libva_win32 = shared_library(
+    'va',
+    sources : libva_win32_sources +
+              libva_win32_headers,
+    soversion : libva_lt_current,
+    version : libva_lt_version,
+    install : true,
+    c_args : libva_win32_args,
+    vs_module_defs : 'libva.def',
+    dependencies : deps)
+
+  install_data(
+    [libva_win32.full_path()],
+    install_dir : get_option('bindir'),
+    rename : ['va.dll']
+  )
+
+  libva_win32_dep = declare_dependency(
+    link_with : libva_win32,
     include_directories : configinc,
     dependencies : deps)
 endif

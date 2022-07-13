@@ -36,8 +36,37 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+typedef HMODULE library_t;
+typedef unsigned int __uid_t;
+inline char* strtok_impl(char *s, const char *delim, char **save_ptr) { return strtok_s(s, delim, save_ptr); }
+inline void* open_library(const char *file, int mode) { return LoadLibrary(file); }
+inline int close_library (void *handle) { return FreeLibrary(handle); }
+inline void *get_symbol_address (void *handle, const char *name) { return GetProcAddress(handle, name); }
+inline __uid_t geteuid() { return 0; };
+inline __uid_t getuid() { return 0; };
+#define ACCESS_OK 0
+#define DRIVER_EXTENSION    ".dll"
+#define DRIVER_PATH_STRING  "%s\\%s%s"
+#define PARSECONFIG_FILE_PATH VA_DRIVERS_PATH "/libva.conf"
+#define ENV_VAR_SEPARATOR ";"
+#else
 #include <dlfcn.h>
 #include <unistd.h>
+typedef void* library_t;
+inline char* strtok_impl(char *s, const char *delim, char **save_ptr) { return strtok_r(s, delim, save_ptr); }
+inline void* open_library(const char *file, int mode) { return dlopen(file, mode); }
+inline int close_library (void *handle) { return dlclose(handle); }
+inline void *get_symbol_address (void *handle, const char *name) { return dlsym(handle, name); }
+inline char* get_last_error() { return dlerror(); }
+#define ACCESS_OK F_OK
+#define DRIVER_EXTENSION    "_drv_video.so"
+#define DRIVER_PATH_STRING  "%s/%s%s"
+#define PARSECONFIG_FILE_PATH SYSCONFDIR "/libva.conf"
+#define ENV_VAR_SEPARATOR ":"
+#endif
 #ifdef ANDROID
 #include <log/log.h>
 /* support versions < JellyBean */
@@ -49,12 +78,21 @@
 #endif
 #endif
 
-#define DRIVER_EXTENSION    "_drv_video.so"
-
 #define ASSERT      assert
 #define CHECK_VTABLE(s, ctx, func) if (!va_checkVtable(dpy, ctx->vtable->va##func, #func)) s = VA_STATUS_ERROR_UNIMPLEMENTED;
 #define CHECK_MAXIMUM(s, ctx, var) if (!va_checkMaximum(dpy, ctx->max_##var, #var)) s = VA_STATUS_ERROR_UNKNOWN;
 #define CHECK_STRING(s, ctx, var) if (!va_checkString(dpy, ctx->str_##var, #var)) s = VA_STATUS_ERROR_UNKNOWN;
+
+#if defined(_WIN32)
+#define last_err_string_size 512
+char last_err_string[last_err_string_size];
+inline static char* get_last_error() {
+    memset(last_err_string, '\0', last_err_string_size);
+    FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, NULL, GetLastError(),
+                  MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), last_err_string, (last_err_string_size - 1), NULL);
+    return last_err_string;
+}
+#endif
 
 /*
  * read a config "env" for libva.conf or from environment setting
@@ -71,12 +109,12 @@ int va_parseConfig(char *env, char *env_value)
     if (env == NULL)
         return 1;
 
-    fp = fopen(SYSCONFDIR "/libva.conf", "r");
+    fp = fopen(PARSECONFIG_FILE_PATH, "r");
     while (fp && (fgets(oneline, 1024, fp) != NULL)) {
         if (strlen(oneline) == 1)
             continue;
-        token = strtok_r(oneline, "=\n", &saveptr);
-        value = strtok_r(NULL, "=\n", &saveptr);
+        token = strtok_impl(oneline, "=\n", &saveptr);
+        value = strtok_impl(NULL, "=\n", &saveptr);
 
         if (NULL == token || NULL == value)
             continue;
@@ -402,13 +440,13 @@ static VAStatus va_getDriverNameByIndex(VADisplay dpy, char **driver_name, int c
 
 static char *va_getDriverPath(const char *driver_dir, const char *driver_name)
 {
-    int n = snprintf(0, 0, "%s/%s%s", driver_dir, driver_name, DRIVER_EXTENSION);
+    int n = snprintf(0, 0, DRIVER_PATH_STRING, driver_dir, driver_name, DRIVER_EXTENSION);
     if (n < 0)
         return NULL;
     char *driver_path = (char *) malloc(n + 1);
     if (!driver_path)
         return NULL;
-    n = snprintf(driver_path, n + 1, "%s/%s%s",
+    n = snprintf(driver_path, n + 1, DRIVER_PATH_STRING,
                  driver_dir, driver_name, DRIVER_EXTENSION);
     if (n < 0) {
         free(driver_path);
@@ -437,9 +475,8 @@ static VAStatus va_openDriver(VADisplay dpy, char *driver_name)
                         __FUNCTION__, __LINE__);
         return VA_STATUS_ERROR_ALLOCATION_FAILED;
     }
-    driver_dir = strtok_r(search_path, ":", &saveptr);
+    driver_dir = strtok_impl(search_path, ENV_VAR_SEPARATOR, &saveptr);
     while (driver_dir) {
-        void *handle = NULL;
         char *driver_path = va_getDriverPath(driver_dir, driver_name);
         if (!driver_path) {
             va_errorMessage(dpy, "%s L%d Out of memory\n",
@@ -450,14 +487,16 @@ static VAStatus va_openDriver(VADisplay dpy, char *driver_name)
 
         va_infoMessage(dpy, "Trying to open %s\n", driver_path);
 #if defined(RTLD_NODELETE) && !defined(ANDROID)
-        handle = dlopen(driver_path, RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE);
+        library_t handle = open_library(driver_path, RTLD_NOW | RTLD_GLOBAL | RTLD_NODELETE);
+#elif defined(RTLD_NOW) && defined(RTLD_GLOBAL)
+        library_t handle = open_library(driver_path, RTLD_NOW | RTLD_GLOBAL);
 #else
-        handle = dlopen(driver_path, RTLD_NOW | RTLD_GLOBAL);
+    library_t handle = open_library(driver_path, 0);
 #endif
         if (!handle) {
             /* Don't give errors for non-existing files */
-            if (0 == access(driver_path, F_OK))
-                va_errorMessage(dpy, "dlopen of %s failed: %s\n", driver_path, dlerror());
+            if (0 == access(driver_path, ACCESS_OK))
+                va_errorMessage(dpy, "dlopen/LoadLibrary of %s failed: %s\n", driver_path, get_last_error());
         } else {
             VADriverInit init_func = NULL;
             char init_func_s[256];
@@ -478,7 +517,7 @@ static VAStatus va_openDriver(VADisplay dpy, char *driver_name)
                 if (va_getDriverInitName(init_func_s, sizeof(init_func_s),
                                          compatible_versions[i].major,
                                          compatible_versions[i].minor)) {
-                    init_func = (VADriverInit)dlsym(handle, init_func_s);
+                    init_func = (VADriverInit)get_symbol_address(handle, init_func_s);
                     if (init_func) {
                         va_infoMessage(dpy, "Found init function %s\n", init_func_s);
                         break;
@@ -489,7 +528,7 @@ static VAStatus va_openDriver(VADisplay dpy, char *driver_name)
             if (compatible_versions[i].major < 0) {
                 va_errorMessage(dpy, "%s has no function %s\n",
                                 driver_path, init_func_s);
-                dlclose(handle);
+                close_library(handle);
             } else {
                 struct VADriverVTable *vtable = ctx->vtable;
                 struct VADriverVTableVPP *vtable_vpp = ctx->vtable_vpp;
@@ -573,7 +612,7 @@ static VAStatus va_openDriver(VADisplay dpy, char *driver_name)
                 }
                 if (VA_STATUS_SUCCESS != vaStatus) {
                     va_errorMessage(dpy, "%s init failed\n", driver_path);
-                    dlclose(handle);
+                    close_library(handle);
                 }
                 if (VA_STATUS_SUCCESS == vaStatus)
                     ctx->handle = handle;
@@ -583,7 +622,7 @@ static VAStatus va_openDriver(VADisplay dpy, char *driver_name)
         }
         free(driver_path);
 
-        driver_dir = strtok_r(NULL, ":", &saveptr);
+        driver_dir = strtok_impl(NULL, ENV_VAR_SEPARATOR, &saveptr);
     }
 
     free(search_path);
@@ -601,7 +640,7 @@ VAPrivFunc vaGetLibFunc(VADisplay dpy, const char *func)
     if (NULL == ctx->handle)
         return NULL;
 
-    return (VAPrivFunc) dlsym(ctx->handle, func);
+    return (VAPrivFunc) get_symbol_address(ctx->handle, func);
 }
 
 
@@ -777,7 +816,7 @@ VAStatus vaTerminate(
 
     if (old_ctx->handle) {
         vaStatus = old_ctx->vtable->vaTerminate(old_ctx);
-        dlclose(old_ctx->handle);
+        close_library(old_ctx->handle);
         old_ctx->handle = NULL;
     }
     free(old_ctx->vtable);

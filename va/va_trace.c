@@ -44,16 +44,31 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#if defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+#include <time.h>
+typedef CRITICAL_SECTION mutex_t;
+inline void mutex_lock(mutex_t* a) { EnterCriticalSection(a); }
+inline void mutex_unlock(mutex_t* a) { LeaveCriticalSection(a); }
+inline void mutex_init(mutex_t* a) { InitializeCriticalSection(a); }
+#else
 #include <dlfcn.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <sys/time.h>
+typedef pthread_mutex_t mutex_t;
+inline void mutex_lock(mutex_t* a) { pthread_mutex_lock(a); }
+inline void mutex_unlock(mutex_t* a) { pthread_mutex_unlock(a); }
+inline void mutex_init(mutex_t* a) { pthread_mutex_init(a, NULL); }
+#endif
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <pthread.h>
-#include <unistd.h>
-#include <sys/time.h>
 #include <errno.h>
 
-#if defined(__linux__)
+#if defined(_WIN32)
+typedef DWORD pid_t;
+#elif defined(__linux__)
 #include <sys/syscall.h>
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
 #include <pthread_np.h>
@@ -66,7 +81,9 @@
 /* bionic, glibc >= 2.30, musl >= 1.3 have gettid(), so add va_ prefix */
 static pid_t va_gettid()
 {
-#if defined(__linux__)
+#if defined(_WIN32)
+    return GetCurrentThreadId();
+#elif defined(__linux__)
     return syscall(__NR_gettid);
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
     return pthread_getthreadid_np();
@@ -186,27 +203,26 @@ struct va_trace {
     char *fn_log_env;
     char *fn_codedbuf_env;
     char *fn_surface_env;
-
-    pthread_mutex_t resource_mutex;
-    pthread_mutex_t context_mutex;
+    mutex_t resource_mutex;
+    mutex_t context_mutex;
     VADisplay dpy;
 };
 
 #define LOCK_RESOURCE(pva_trace)                                    \
     if(pva_trace)                                                   \
-        pthread_mutex_lock(&pva_trace->resource_mutex)
+        mutex_lock(&pva_trace->resource_mutex)
 
 #define UNLOCK_RESOURCE(pva_trace)                                  \
     if(pva_trace)                                                   \
-        pthread_mutex_unlock(&pva_trace->resource_mutex)
+        mutex_unlock(&pva_trace->resource_mutex)
 
 #define LOCK_CONTEXT(pva_trace)                                     \
         if(pva_trace)                                               \
-            pthread_mutex_lock(&pva_trace->context_mutex)
+            mutex_lock(&pva_trace->context_mutex)
 
 #define UNLOCK_CONTEXT(pva_trace)                                   \
         if(pva_trace)                                               \
-            pthread_mutex_unlock(&pva_trace->context_mutex)
+            mutex_unlock(&pva_trace->context_mutex)
 
 #define DPY2TRACECTX(dpy, context, buf_id)                                  \
     struct va_trace *pva_trace = NULL;                                      \
@@ -538,6 +554,18 @@ static void FILE_NAME_SUFFIX(
     if (left < (size + 8 + 10))
         return;
 
+#if defined(_WIN32)
+    SYSTEMTIME st;
+    GetSystemTime(&st);
+    sprintf(env_value + tmp,
+            ".%02d%02d%02d.",
+            (unsigned int)(st.wSecond / 3600) % 24,
+            (unsigned int)(st.wSecond / 60) % 60,
+            (unsigned int)st.wSecond % 60);
+
+    tmp += 8;
+    left -= 8;
+#else
     if (gettimeofday(&tv, NULL) == 0) {
         sprintf(env_value + tmp,
                 ".%02d%02d%02d.",
@@ -548,6 +576,7 @@ static void FILE_NAME_SUFFIX(
         tmp += 8;
         left -= 8;
     }
+#endif
 
     if (suffix_str) {
         strcat(env_value + tmp,
@@ -773,8 +802,8 @@ void va_TraceInit(VADisplay dpy)
 
     pva_trace->dpy = dpy;
 
-    pthread_mutex_init(&pva_trace->resource_mutex, NULL);
-    pthread_mutex_init(&pva_trace->context_mutex, NULL);
+    mutex_init(&pva_trace->resource_mutex);
+    mutex_init(&pva_trace->context_mutex);
 
     if (va_parseConfig("LIBVA_TRACE", &env_value[0]) == 0) {
         pva_trace->fn_log_env = strdup(env_value);
@@ -821,13 +850,13 @@ void va_TraceInit(VADisplay dpy)
         if (va_parseConfig("LIBVA_TRACE_SURFACE_GEOMETRY", &env_value[0]) == 0) {
             char *p = env_value, *q;
 
-            trace_ctx->trace_surface_width = strtod(p, &q);
+            trace_ctx->trace_surface_width = (unsigned int) strtod(p, &q);
             p = q + 1; /* skip "x" */
-            trace_ctx->trace_surface_height = strtod(p, &q);
+            trace_ctx->trace_surface_height = (unsigned int) strtod(p, &q);
             p = q + 1; /* skip "+" */
-            trace_ctx->trace_surface_xoff = strtod(p, &q);
+            trace_ctx->trace_surface_xoff = (unsigned int) strtod(p, &q);
             p = q + 1; /* skip "+" */
-            trace_ctx->trace_surface_yoff = strtod(p, &q);
+            trace_ctx->trace_surface_yoff = (unsigned int) strtod(p, &q);
 
             va_infoMessage(dpy, "LIBVA_TRACE_SURFACE_GEOMETRY is on, only dump surface %dx%d+%d+%d content\n",
                            trace_ctx->trace_surface_width,
@@ -855,6 +884,10 @@ void va_TraceEnd(VADisplay dpy)
     if (!pva_trace)
         return;
 
+#if defined(_WIN32)
+    DeleteCriticalSection(&pva_trace->resource_mutex);
+    DeleteCriticalSection(&pva_trace->context_mutex);
+#endif
     if (pva_trace->fn_log_env)
         free(pva_trace->fn_log_env);
 
@@ -938,16 +971,23 @@ static void va_TracePrint(struct trace_context *trace_ctx, const char *msg, ...)
 static void va_TraceMsg(struct trace_context *trace_ctx, const char *msg, ...)
 {
     va_list args;
-    struct timeval tv;
 
     if (!msg) {
         va_TracePrint(trace_ctx, msg);
         return;
     }
 
+#if defined(_WIN32)
+    SYSTEMTIME st;
+    GetSystemTime(&st);
+    va_TracePrint(trace_ctx, "[%04d.%06d]",
+                      (unsigned int)st.wSecond & 0xffff, (unsigned int)st.wMilliseconds);
+#else
+    struct timeval tv;
     if (gettimeofday(&tv, NULL) == 0)
         va_TracePrint(trace_ctx, "[%04d.%06d]",
                       (unsigned int)tv.tv_sec & 0xffff, (unsigned int)tv.tv_usec);
+#endif
 
     if (trace_ctx->trace_context != VA_INVALID_ID)
         va_TracePrint(trace_ctx,

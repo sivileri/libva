@@ -1692,8 +1692,9 @@ typedef struct _VASurfaceAttrib {
 /**
  * @name VASurfaceAttribMemoryType values in bit fields.
  * Bit 0:7 are reserved for generic types, Bit 31:28 are reserved for
- * Linux DRM, Bit 23:20 are reserved for Android. DRM and Android specific
- * types are defined in DRM and Android header files.
+ * Linux DRM, Bit 23:20 are reserved for Android. Bits 19:16 are reserved for
+ * Win32, DRM and Android specific
+ * types are defined in Win32, DRM and Android header files.
  */
 /**@{*/
 /** \brief VA memory type (default) is supported. */
