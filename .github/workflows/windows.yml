@@ -25,6 +25,6 @@ jobs:
     - name: Install Meson and Ninja
       run: pip install meson ninja
     - name: Configure with meson for WIN32 backend only
-      run: meson -C build -v -Ddisable_drm=yes -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
+      run: meson build -Ddisable_drm=yes -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
     - name: Build and Install with ninja
       run: ninja -C build install
