@@ -36,10 +36,6 @@ jobs:
         if (!(Test-Path $devshell -Type Leaf)) { \
             $devshell = Join-Path $tools_dir 'vsdevshell' 'Microsoft.VisualStudio.DevShell.dll' \
         } \
-        # Fail if didn't find the DevShell library \
-        if (!(Test-Path $devshell -Type Leaf)) { \
-            throw "error: cannot find Microsoft.VisualStudio.DevShell.dll" \
-        } \
         Import-Module $devshell \
         Enter-VsDevShell -VsInstanceId $vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=${{ inputs.architecture }} -no_logo'
     - name: Configure with meson for WIN32 backend only
