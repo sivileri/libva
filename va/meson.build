@@ -286,6 +286,7 @@ if WITH_WAYLAND
     dependencies : deps)
 endif
 
+fs = import('fs')
 if WITH_WIN32
   libva_win32_sources = [
     'win32/va_win32.c',
@@ -318,11 +319,13 @@ if WITH_WIN32
     vs_module_defs : 'libva.def',
     dependencies : deps)
 
-  install_data(
-    [libva_win32.full_path()],
-    install_dir : get_option('bindir'),
-    rename : ['va.dll']
-  )
+  if fs.is_file(libva_win32.full_path())
+    install_data(
+      [libva_win32.full_path()],
+      install_dir : get_option('bindir'),
+      rename : ['va.dll']
+    )
+  endif
 
   libva_win32_dep = declare_dependency(
     link_with : libva_win32,
@@ -330,7 +333,6 @@ if WITH_WIN32
     dependencies : deps)
 endif
 
-fs = import('fs')
 foreach header : libva_headers_subproject
   configure_file(output: fs.name(header), input: header, copy: true)
 endforeach
