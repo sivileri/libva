@@ -11,8 +11,8 @@ on:
     - '!.github/workflows/windows.yml'
 
 env:
-  CC: "cl", 
-  CXX: "cl",
+  CC: "cl"
+  CXX: "cl"
 
 jobs:
   windows:
