@@ -10,6 +10,10 @@ on:
     - '.github/workflows/**'
     - '!.github/workflows/windows.yml'
 
+env:
+  CC: "cl"
+  CXX: "cl"
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -19,9 +23,6 @@ jobs:
       with:
         python-version: '3.x'
     - run: pip install meson ninja
-      env:
-        CC: "cl", 
-        CXX: "cl",
     - run: meson -C build -v -Ddisable_drm=yes -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
     - run: ninja -C build install
       if: failure()
