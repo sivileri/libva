@@ -75,7 +75,7 @@ configinc = include_directories('.')
 cc = meson.get_compiler('c')
 dl_dep = cc.find_library('dl', required : false)
 
-WITH_DRM = not get_option('disable_drm')
+WITH_DRM = not get_option('disable_drm') and (host_machine.system() != 'windows')
 libdrm_dep = dependency('libdrm', version : '>= 2.4.60', required : WITH_DRM)
 
 WITH_X11 = false
@@ -122,7 +122,7 @@ endif
 WITH_WIN32 = false
 libwin32_dep = []
 if get_option('with_win32') != 'no'
-    WITH_WIN32 =(host_machine.system() == 'windows')
+    WITH_WIN32 = (host_machine.system() == 'windows')
 endif
 
 if (not WITH_DRM and not WITH_X11 and not WITH_WAYLAND and not WITH_WIN32)
