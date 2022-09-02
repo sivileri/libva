@@ -1,0 +1,31 @@
+name: windows
+
+on:
+  push:
+    paths-ignore:
+    - '.github/workflows/**'
+    - '!.github/workflows/windows.yml'
+  pull_request:
+    paths-ignore:
+    - '.github/workflows/**'
+    - '!.github/workflows/windows.yml'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - run: pip install meson ninja
+    - run: meson setup builddir/
+      env:
+        cc: "cl", 
+        CXX: "cl",
+    - run: meson -C build -v -Ddisable_drm=yes -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
+    - run: ninja -C build install
+      if: failure()
+      with:
+        name: Windows_Meson_Buildlog
+        path: builddir/meson-logs/buildlog.txt
