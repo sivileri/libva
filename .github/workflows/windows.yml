@@ -44,7 +44,14 @@ jobs:
           Import-Module $devshell
           Enter-VsDevShell -VsInstanceId $vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=${{ inputs.architecture }} -no_logo'
         }
+        # Enter VsDevShell, capture the environment difference and export it to github env
+        $env_before = @{}
+        Get-ChildItem env: | %{ $env_before.Add($_.Name, $_.Value) }
         EnterDevShellEnv
+        $env_after = @{}
+        Get-ChildItem env: | %{ $env_after.Add($_.Name, $_.Value) }
+        $env_diff = $env_after.GetEnumerator() | where { -not $env_before.ContainsKey($_.Name) -or $env_before[$_.Name] -ne $_.Value }
+        $env_diff | %{ echo "$($_.Name)=$($_.Value)" >> $env:GITHUB_ENV }
     - name: Configure with meson for WIN32 backend only
       run: meson build -Ddisable_drm=true -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
     - name: Build and Install with ninja
