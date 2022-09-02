@@ -24,6 +24,10 @@ jobs:
         python-version: '3.x'
     - name: Install Meson and Ninja
       run: pip install meson ninja
+    - name: Prepare MSVC
+      uses: bus1/cabuild/action/msdevshell@v1
+      with:
+        architecture: x64
     - name: Configure with meson for WIN32 backend only
       run: meson build -Ddisable_drm=true -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
     - name: Build and Install with ninja
