@@ -1,0 +1,30 @@
+name: windows
+
+on:
+  push:
+    paths-ignore:
+    - '.github/workflows/**'
+    - '!.github/workflows/windows.yml'
+  pull_request:
+    paths-ignore:
+    - '.github/workflows/**'
+    - '!.github/workflows/windows.yml'
+
+env:
+  CC: "cl"
+  CXX: "cl"
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+    - name: Install Meson and Ninja
+      run: pip install meson ninja
+    - name: Configure with meson for WIN32 backend only
+      run: meson -C build -v -Ddisable_drm=yes -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
+    - name: Build and Install with ninja
+      run: ninja -C build install
