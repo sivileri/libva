@@ -24,10 +24,24 @@ jobs:
         python-version: '3.x'
     - name: Install Meson and Ninja
       run: pip install meson ninja
-    - name: Prepare MSVC
-      uses: bus1/cabuild/action/msdevshell@v1
-      with:
-        architecture: x64
+    - name: Enter DevShell
+      run: |
+          $vsw = Get-Command 'vswhere'
+          $VSFfavors = 'Community','Professional','Enterprise','BuildTools' | %{ "Microsoft.VisualStudio.Product.$_" }
+          $vs = & $vsw.Path -products $VSFfavors -latest -format json | ConvertFrom-Json
+          $tools_dir = Join-Path $vs.installationPath 'Common7' 'Tools'
+          # Try the root tools dir
+          $devshell = Join-Path $tools_dir 'Microsoft.VisualStudio.DevShell.dll'
+          # Try finding it under vsdevshell
+          if (!(Test-Path $devshell -Type Leaf)) {
+              $devshell = Join-Path $tools_dir 'vsdevshell' 'Microsoft.VisualStudio.DevShell.dll'
+          }
+          # Fail if didn't find the DevShell library
+          if (!(Test-Path $devshell -Type Leaf)) {
+              throw "error: cannot find Microsoft.VisualStudio.DevShell.dll"
+          }
+          Import-Module $devshell
+          Enter-VsDevShell -VsInstanceId $vs.instanceId -SkipAutomaticLocation -DevCmdArguments '-arch=${{ inputs.architecture }} -no_logo'
     - name: Configure with meson for WIN32 backend only
       run: meson build -Ddisable_drm=true -Dwith_x11=no -Dwith_glx=no -Dwith_wayland=no -Dwith_win32=yes
     - name: Build and Install with ninja
